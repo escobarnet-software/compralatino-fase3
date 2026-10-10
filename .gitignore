@@ -1,0 +1,33 @@
+# Dependencias PHP (se restauran con composer install)
+compralatino-app/vendor/
+vendor/
+
+# Entorno local (secretos y rutas de máquina)
+compralatino-app/.env
+.env
+
+# Bases de datos SQLite locales
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Logs y cachés de Laravel
+compralatino-app/storage/logs/*.log
+compralatino-app/storage/framework/cache/*
+compralatino-app/storage/framework/sessions/*
+compralatino-app/storage/framework/views/*
+compralatino-app/bootstrap/cache/*.php
+compralatino-app/public/hot
+compralatino-app/public/storage
+
+# Herramientas locales (binarios, no código)
+_tools/
+
+# Node
+compralatino-app/node_modules/
+compralatino-app/public/build/
+
+# Sistema
+Thumbs.db
+.DS_Store
