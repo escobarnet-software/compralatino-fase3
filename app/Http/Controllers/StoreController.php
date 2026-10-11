@@ -30,10 +30,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\PaymentDeclinedException;
 use App\Jobs\ProcessYAuctionPurchase;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\UserHistory;
+use App\Services\PaymentService;
 use App\Services\RecommendationService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -176,42 +178,111 @@ class StoreController extends Controller
     }
 
     /**
-     * PROCESAR COMPRA — el método más crítico del controlador.
+     * CHECKOUT (Paso 1 — mostrar formulario de tarjeta).
      *
-     * Secuencia que demuestra el flujo por capas:
-     *   CAPA PRESENTACIÓN → StoreOrderRequest valida y sanea (ya llegó validado).
-     *   CAPA NEGOCIO      → DB::transaction (atomicidad) + Job en cola (async).
-     *   CAPA PERSISTENCIA → Eloquent persiste la orden (sin SQL crudo).
-     *
-     * El usuario recibe respuesta INMEDIATA; la llamada a YAuctions ocurre
-     * después, en el worker de la cola (desacoplamiento temporal).
+     * El usuario YA eligió producto/cantidad/plataforma en la ficha; aquí ve el
+     * RESUMEN del pedido e ingresa su tarjeta. Patrón PRG previo: los datos del
+     * pedido viajan como query (?product_id=&cantidad=&plataforma=) validados
+     * con las mismas reglas de dominio (fail-fast si se manipula la URL).
      */
-    public function store(\App\Http\Requests\StoreOrderRequest $request): RedirectResponse
+    public function checkout(Request $request): View|RedirectResponse
     {
-        // validated(): SOLO campos aprobados por las reglas (anti mass-assignment).
-        $datos = $request->validated();
+        $pedido = $request->validate([
+            'product_id' => ['required', 'integer', 'exists:products,id'],
+            'cantidad'   => ['required', 'integer', 'min:1', 'max:10'],
+            'plataforma' => ['required', 'in:local,yauctions'],
+        ]);
 
-        $producto = Product::whereKey($datos['product_id'])->firstOrFail();
+        $producto = Product::whereKey($pedido['product_id'])->firstOrFail();
 
-        // Regla de negocio simple en el borde: stock suficiente.
-        if (! $producto->hayStockDisponible($datos['cantidad'])) {
-            return back()->withErrors([
+        if (! $producto->hayStockDisponible($pedido['cantidad'])) {
+            return redirect()->route('store.show', $producto)->withErrors([
                 'cantidad' => 'No hay stock suficiente para la cantidad solicitada.',
             ]);
         }
 
-        // ATOMICIDAD (ACID): crear la orden y descontar stock es una unidad.
-        // Si algo falla a mitad, el ROLLBACK deja la BD consistente.
-        $orden = DB::transaction(function () use ($datos, $producto, $request) {
+        $total = (float) $producto->precio * $pedido['cantidad'];
+
+        return view('store.checkout', [
+            'producto'   => $producto,
+            'cantidad'   => (int) $pedido['cantidad'],
+            'plataforma' => $pedido['plataforma'],
+            'total'      => $total,
+        ]);
+    }
+
+    /**
+     * PROCESAR COMPRA CON TARJETA (Paso 2 — cobrar y registrar).
+     *
+     * Secuencia por capas (el ORDEN importa):
+     *   1. PRESENTACIÓN → StoreCheckoutRequest ya validó forma del pedido+tarjeta.
+     *   2. NEGOCIO      → PaymentService::cobrar() intenta el cargo PRIMERO.
+     *      Si la tarjeta falla (PaymentDeclinedException), NO se crea orden,
+     *      NO se descuenta stock y NO se despacha el Job (fail-fast financiero:
+     *      nunca se ejecuta una compra impaga).
+     *   3. PERSISTENCIA → DB::transaction crea la orden YA pagada (con marca,
+     *      últimos 4 y referencia del cargo) + descuenta stock (atomicidad ACID).
+     *   4. ASÍNCRONO    → el Job sincroniza con YAuctions en segundo plano.
+     *
+     * SEGURIDAD: el PAN y el CVV solo existen en $datos (memoria del request);
+     * jamás se asignan al modelo ni se registran (PaymentService los descarta).
+     */
+    public function store(\App\Http\Requests\StoreCheckoutRequest $request, PaymentService $pagos): RedirectResponse
+    {
+        // validated(): SOLO campos aprobados (anti mass-assignment).
+        $datos = $request->validated();
+
+        $producto = Product::whereKey($datos['product_id'])->firstOrFail();
+
+        // Regla de negocio en el borde: stock suficiente.
+        if (! $producto->hayStockDisponible($datos['cantidad'])) {
+            return back()->withErrors([
+                'cantidad' => 'No hay stock suficiente para la cantidad solicitada.',
+            ])->withInput($request->except(['numero', 'cvv']));
+        }
+
+        $total = (float) $producto->precio * $datos['cantidad'];
+
+        // PASO A — COBRO PRIMERO (fuera de la transacción: el cargo externo no
+        // puede deshacerse con ROLLBACK; si falla, nada se persiste).
+        try {
+            $cargo = $pagos->cobrar(
+                [
+                    'numero'      => $datos['numero'],
+                    'titular'     => $datos['titular'],
+                    'vencimiento' => $datos['vencimiento'],
+                    'cvv'         => $datos['cvv'],
+                ],
+                $total,
+                $producto->moneda,
+                // Idempotencia didáctica: la referencia del cargo se ancla a un
+                // identificador único del intento (evita doble cobro al reintentar).
+                (int) (Order::max('id') ?? 0) + 1
+            );
+        } catch (PaymentDeclinedException $rechazo) {
+            // Regla de negocio: tarjeta rechazada → volver al checkout con el
+            // mensaje, SIN crear orden. Se reenvían los campos NO sensibles.
+            return back()
+                ->withErrors(['numero' => $rechazo->getMessage()])
+                ->withInput($request->except(['numero', 'cvv']));
+        }
+
+        // PASO B — ORDEN PAGADA (atomicidad ACID: orden + stock en una unidad).
+        $orden = DB::transaction(function () use ($datos, $producto, $request, $total, $cargo) {
             $orden = Order::create([
-                'user_id'        => $request->user()->id,
-                'product_id'     => $producto->id,
-                'cantidad'       => $datos['cantidad'],
-                'precio_unitario'=> $producto->precio,     // precio congelado al comprar
-                'moneda'         => $producto->moneda,
-                'total'          => $producto->precio * $datos['cantidad'],
-                'estado'         => Order::ESTADO_PENDIENTE,
-                'plataforma'     => $datos['plataforma'],
+                'user_id'         => $request->user()->id,
+                'product_id'      => $producto->id,
+                'cantidad'        => $datos['cantidad'],
+                'precio_unitario' => $producto->precio,     // precio congelado al comprar
+                'moneda'          => $producto->moneda,
+                'total'           => $total,
+                'estado'          => Order::ESTADO_PENDIENTE,
+                'plataforma'      => $datos['plataforma'],
+                // Datos NO sensibles del cobro (marca + últimos 4 + referencia).
+                'marca_tarjeta'   => $cargo['marca'],
+                'tarjeta_ultimos4' => $cargo['ultimos4'],
+                'referencia_pago' => $cargo['referencia'],
+                'pagado_en'       => now(),
             ]);
 
             // Descuento optimista de inventario (reducción condicional).

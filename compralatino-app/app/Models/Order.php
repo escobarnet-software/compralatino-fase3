@@ -57,6 +57,11 @@ class Order extends Model
         'total',
         'estado',
         'plataforma',
+        // Datos NO sensibles del cobro (nunca el PAN ni el CVV).
+        'marca_tarjeta',
+        'tarjeta_ultimos4',
+        'referencia_pago',
+        'pagado_en',
         'external_reference',
         'datos_sincronizacion',
         'sincronizado_en',

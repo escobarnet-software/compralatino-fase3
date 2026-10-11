@@ -59,7 +59,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/productos/{product}', [StoreController::class, 'show'])
         ->name('store.show');
 
-    // Procesar compra: valida con StoreOrderRequest y despacha el Job en cola.
+    // Checkout con tarjeta (Paso 1: formulario de pago | Paso 2: cobro+orden).
+    Route::get('/checkout', [StoreController::class, 'checkout'])
+        ->name('store.checkout');
     Route::post('/ordenes', [StoreController::class, 'store'])
         ->name('orders.store');
 
