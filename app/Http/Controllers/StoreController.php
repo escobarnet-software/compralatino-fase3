@@ -260,11 +260,17 @@ class StoreController extends Controller
                 (int) (Order::max('id') ?? 0) + 1
             );
         } catch (PaymentDeclinedException $rechazo) {
-            // Regla de negocio: tarjeta rechazada → volver al checkout con el
-            // mensaje, SIN crear orden. Se reenvían los campos NO sensibles.
-            return back()
-                ->withErrors(['numero' => $rechazo->getMessage()])
-                ->withInput($request->except(['numero', 'cvv']));
+            // Regla de negocio: tarjeta rechazada → NO se crea orden ni se
+            // descuenta stock. Devolvemos EXPLÍCITAMENTE al checkout (no back()
+            // a ciegas) conservando producto/cantidad/plataforma como query, para
+            // que el usuario vea el error JUNTO al campo de tarjeta y lo corrija.
+            // withInput(except numero/cvv): repobla lo no sensible; NUNCA el PAN.
+            return redirect()->route('store.checkout', [
+                'product_id' => $producto->id,
+                'cantidad'   => $datos['cantidad'],
+                'plataforma' => $datos['plataforma'],
+            ])->withErrors(['numero' => $rechazo->getMessage()])
+              ->withInput($request->except(['numero', 'cvv']));
         }
 
         // PASO B — ORDEN PAGADA (atomicidad ACID: orden + stock en una unidad).

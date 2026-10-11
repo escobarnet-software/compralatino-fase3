@@ -75,25 +75,21 @@
             </section>
 
             {{--
-              FORMULARIO DE COMPRA: los campos enviados coinciden EXACTAMENTE
-              con las reglas de StoreOrderRequest ('product_id', 'cantidad',
-              'plataforma') — cohesión entre validación y presentación.
+              FORMULARIO DE COMPRA: en vez de crear la orden directamente, lleva
+              al usuario al CHECKOUT con tarjeta (requisito Fase III "pagar con
+              tarjeta"). Usa GET para que la elección de cantidad y plataforma
+              viaje en la URL; el cobro con tarjeta se ingresa en el checkout.
             --}}
             <section class="panel" aria-labelledby="titulo-compra">
                 <h2 id="titulo-compra">Realizar compra</h2>
 
-                <form method="POST" action="{{ route('orders.store') }}">
-                    @csrf
-
+                <form method="GET" action="{{ route('store.checkout') }}">
                     <input type="hidden" name="product_id" value="{{ $producto->id }}">
 
-                    {{-- Cantidad: validada como integer min:1 max:10. --}}
+                    {{-- Cantidad: viaja al checkout (validada ahí como min:1 max:10). --}}
                     <label for="cantidad">Cantidad</label>
                     <input type="number" id="cantidad" name="cantidad"
                            value="{{ old('cantidad', 1) }}" min="1" max="10" required>
-                    @error('cantidad')
-                        <p class="error-campo" role="alert">{{ $message }}</p>
-                    @enderror
 
                     {{-- Plataforma multiplataforma (dominio cerrado: local|yauctions). --}}
                     <label for="plataforma">Plataforma de compra</label>
@@ -105,17 +101,11 @@
                             Tienda local
                         </option>
                     </select>
-                    @error('plataforma')
-                        <p class="error-campo" role="alert">{{ $message }}</p>
-                    @enderror
-                    @error('product_id')
-                        <p class="error-campo" role="alert">{{ $message }}</p>
-                    @enderror
 
-                    <button type="submit">Confirmar compra</button>
+                    <button type="submit">Continuar al pago</button>
                     <p style="margin-top:.75rem;font-size:.82rem;color:var(--texto-suave);">
-                        Al confirmar, la orden se procesa EN SEGUNDO PLANO vía cola;
-                        podrás seguir su estado de forma instantánea.
+                        Continuarás a la pantalla de pago con tarjeta; al confirmar,
+                        la orden se procesa EN SEGUNDO PLANO vía cola.
                     </p>
                 </form>
             </section>

@@ -124,11 +124,14 @@
         @if (session('status'))
             <p class="exito-flash" role="status">{{ session('status') }}</p>
         @endif
-        @if ($errors->any())
-            <div class="alerta-error" role="alert">
-                <strong>Revisa tu compra:</strong> {{ $errors->first() }}
-            </div>
-        @endif
+
+        {{--
+          NOTA: el catálogo YA no procesa compras directas (todo pasa por el
+          checkout con tarjeta). Por eso eliminamos el bloque antiguo
+          "Revisa tu compra" que mostraba errores de validación aquí: los
+          errores de pago ahora se muestran SOLO en el checkout, junto al campo
+          que el usuario debe corregir (UX + capa de presentación coherente).
+        --}}
 
         {{--
           SECCIÓN DE RECOMENDACIONES (Fase III): generadas por la Capa de
@@ -145,14 +148,7 @@
                             <h3>{{ $producto->nombre }}</h3>
                             <span class="badge {{ $producto->plataforma }}">{{ ucfirst($producto->plataforma) }}</span>
                             <p class="precio">{{ $producto->precioFormateado() }}</p>
-                            <form class="compra" method="POST" action="{{ route('orders.store') }}">
-                                @csrf
-                                {{-- Campos ocultos validados por StoreOrderRequest. --}}
-                                <input type="hidden" name="product_id" value="{{ $producto->id }}">
-                                <input type="hidden" name="cantidad" value="1">
-                                <input type="hidden" name="plataforma" value="{{ $producto->plataforma }}">
-                                <button type="submit">Comprar</button>
-                            </form>
+                            <a class="btn" href="{{ route('store.checkout', ['product_id' => $producto->id, 'cantidad' => 1, 'plataforma' => $producto->plataforma]) }}">Comprar</a>
                         </article>
                     @endforeach
                 </div>
@@ -181,14 +177,8 @@
                             Stock: {{ $producto->stock }} · {{ $producto->orders_count }} venta(s)
                         </p>
 
-                        {{-- Compra rápida: 1 unidad, plataforma nativa del producto. --}}
-                        <form class="compra" method="POST" action="{{ route('orders.store') }}">
-                            @csrf
-                            <input type="hidden" name="product_id" value="{{ $producto->id }}">
-                            <input type="hidden" name="cantidad" value="1">
-                            <input type="hidden" name="plataforma" value="{{ $producto->plataforma }}">
-                            <button type="submit">Comprar</button>
-                        </form>
+                        {{-- Compra con tarjeta: 1 unidad; el pago se ingresa en el checkout. --}}
+                        <a class="btn" style="margin-top:auto;" href="{{ route('store.checkout', ['product_id' => $producto->id, 'cantidad' => 1, 'plataforma' => $producto->plataforma]) }}">Comprar</a>
                     </article>
                 @empty
                     <p>No hay productos en el catálogo. Ejecuta el seeder de demostración.</p>

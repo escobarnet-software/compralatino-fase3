@@ -73,13 +73,7 @@
                             Sugerido por tu interés en <strong>{{ $producto->categoria }}</strong>
                             · {{ $producto->orders_count ?? 0 }} compra(s) de otros clientes.
                         </p>
-                        <form class="compra" method="POST" action="{{ route('orders.store') }}">
-                            @csrf
-                            <input type="hidden" name="product_id" value="{{ $producto->id }}">
-                            <input type="hidden" name="cantidad" value="1">
-                            <input type="hidden" name="plataforma" value="{{ $producto->plataforma }}">
-                            <button type="submit">Comprar</button>
-                        </form>
+                        <a class="btn" style="text-decoration:none;text-align:center;" href="{{ route('store.checkout', ['product_id' => $producto->id, 'cantidad' => 1, 'plataforma' => $producto->plataforma]) }}">Comprar</a>
                     </article>
                 @endforeach
             </div>
